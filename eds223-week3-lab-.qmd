@@ -1,0 +1,414 @@
+---
+title: "Week 3 - Lab"
+subtitle: "Spatial data operations"
+author: "Jordan Sibley"
+format: html
+---
+
+## 1. Set Up
+
+```{r}
+# Packages 
+library(sf)
+library(tmap)
+library(tidyverse)
+library(spData)
+
+# Data 
+nz <- spData::nz
+nz_height <- spData::nz_height
+canterbury <- nz %>% 
+  filter(Name == "Canterbury")
+```
+
+## 2. Spatial subsetting (filtering)
+
+```{r}
+# Initial map of the data 
+tm_shape(nz) +
+  tm_polygons() +
+  tm_fill(col = "darkgrey") +
+  tm_shape(nz_height) +
+  tm_dots(col = "red")
+```
+
+```{r}
+# subset nz_heights to just the features that intersect Canterbury
+# [ rows, columns]
+c_height1<- nz_height[canterbury, ]
+```
+
+By default bracket subsetting will filter to features in x that intersect features in y. However, we can use other topological relationships by changing options.
+
+```{r}
+nz_height[canterbury, , op = st_disjoint]
+```
+
+### `st_filter()`
+
+Using `st_filter()` we can perform spatial subsetting in the same format as using dplyr commands. The `.predicate =` argument allows us to define which topological relationship we would like to filter by (e.g. `st_intersects()`, `st_disjoint()`).
+
+```{r}
+# subset to the features in Canterbury
+c_heights2<- nz_height %>% 
+  st_filter(y = canterbury, .predicate = st_intersects)
+```
+
+### Topological operators (`st_intersects()`)
+
+The output of st_intersects() and other topological operators is a sparse geometry binary predicate list (yikes!) that’s a list that defines whether or not each feature in x intersects y.
+
+This can be converted into logical vector of TRUE and FALSE values which can then be used for filtering.
+
+```{r}
+# sparse binary predicate list
+nz_height_sgbp <- st_intersects(x = nz_height, y = canterbury)
+nz_height_sgbp
+```
+
+-   (empty) = do not intersect
+-   1 = intersects
+
+```{r}
+# convert to logical vector 
+nz_height_logical <- lengths(nz_height_sgbp) > 0
+
+# filter based on logical vector 
+c_height3 = nz_height[nz_height_logical, ]
+```
+
+### Distance Relationships
+
+In some cases, it might be helpful to subset based on a distance to a feature. In these cases we can use the `st_is_within_distance()` to filter features. By default `st_is_within_distance()` will return a sparse geometry binary predicate list as in `st_intersects()` above. Instead, we can return a logical by setting `sparse = FALSE`.
+
+```{r}
+# Finding heights within 1000 km of Canterbury 
+nz_height_logical <- st_is_within_distance(nz_height, canterbury,
+                      dist = units::set_units(1000, "km"),
+                      sparse = FALSE)
+
+c_height4 <- nz_height[nz_height_logical, ]
+```
+
+## 3. Spatial Joins
+
+### Topological relationships
+
+With spatial data, we can join based on the `geometry` columns using topological relationships using the `st_join()` function. By default `st_join()` will join based on geometries that intersect, but can accommodate other topological relationships by changing the join = argument. By default `st_join()` performs left joins, but can perform inner joins by setting `left = FALSE`.
+
+Usual syntax
+
+```         
+# specify join based on geometries x within y
+st_join(x, y, join = st_within)
+
+# specify inner join
+st_join(x, y, left = FALSE)
+```
+
+```{r}
+st_join(nz_height, nz, join = st_intersects) %>% 
+  select(id = t50_fid, elevation, region = Name) %>% 
+  group_by(region) %>% 
+  summarise(n_points = n()) %>% 
+  st_drop_geometry() # to drop geom and make a nice table
+```
+
+
+#### Distance-based joins 
+
+```{r}
+cycle_hire <- spData::cycle_hire
+cycle_hire_osm <- spData::cycle_hire_osm
+
+tmap_mode("view")
+
+tm_shape(cycle_hire) +
+  tm_symbols(col = "red", alpha = 0.2) +
+  tm_shape(cycle_hire_osm) +
+  tm_symbols(col = "blue", alpha = 0.2)
+
+```
+
+Unfortunately it appears that the points from the two datasets do not perfectly align.
+
+Creating a check !!
+```{r}
+# check whether or not points overlap
+if(any(st_intersects(cycle_hire, cycle_hire_osm, sparse = FALSE)) == TRUE){
+  print("points overlap")
+} else{
+  warning("points don't overlap")
+}
+```
+
+
+We can join by again using st_join(), but this time including a distance threshold using st_is_within_distance.
+
+```{r}
+cycle_hire_join <- st_join(cycle_hire, cycle_hire_osm,
+         st_is_within_distance,
+         dist = units::set_units(20, "m"))
+```
+
+Creating a check to see if anything went wrong in the join
+```{r}
+if(nrow(cycle_hire) == nrow(cycle_hire_join)){
+  print("join matches original data dimensions")
+} else {
+  warning("join does not match orginal data dimensions")
+  print(paste("cycle_hire has", nrow(cycle_hire), "rows"))
+  print(paste("cycle_hire_join has", nrow(cycle_hire_join), "rows"))
+}
+```
+
+
+# Geometry operations 
+## 1. Aggregating 
+
+```{r}
+# load US states
+us_states <- spData::us_states
+
+# summarize total population within each region
+regions <- us_states %>%
+  group_by(REGION) %>%
+  summarise(population = sum(total_pop_15, na.rm = TRUE))
+
+tmap_mode("plot")
+tm_shape(us_states) +
+  tm_polygons()
+tm_shape(regions) +
+  tm_polygons()
+
+```
+
+
+```{r}
+# filtering to states in the West 
+us_west <- us_states[us_states$REGION == "West", ]
+
+# visualize what we just did in a map 
+tm_shape(us_west) +
+  tm_polygons()
+```
+
+```{r}
+# union the states (remove boundaries inside)
+us_west_union <- st_union(us_west)
+
+
+# add texas to the western states 
+texas <- us_states[us_states$NAME == "Texas", ]
+texas_union <- st_union(us_west_union, texas)
+
+tm_shape(texas_union) +
+  tm_polygons()
+```
+
+
+## Buffering 
+
+An alternative approach to finding items that are within a set distance would be to expand the `geometry` and then intersect with objects of interest. We can change the size of geometries by creating a “buffer” using `st_buffer()`.
+
+```{r}
+# load in seine data 
+seine <- spData::seine
+
+# create buffer 5000 meters (5 km) surrounding seine 
+seine_buffer <- st_buffer(seine, dist = 5000)
+
+tm_shape(seine_buffer) +
+  tm_polygons() +
+tm_shape(seine) +
+  tm_lines()
+```
+
+
+```{r}
+# create buffer 50,000 meters surrounding seine 
+seine_buffer2 <- st_buffer(seine, dist = 50000)
+
+tm_shape(seine_buffer2) +
+  tm_polygons() +
+tm_shape(seine) +
+  tm_lines()
+```
+
+The Seine is actually comprised of multiple geometries. To make things simpler, and more look better on maps, we can combine geometries using our new friend st_union!
+
+```{r}
+seine_union <- st_union(seine_buffer2)
+
+tm_shape(seine_union) +
+  tm_polygons() +
+tm_shape(seine) +
+  tm_lines()
+```
+
+
+```{r}
+nz_height_buffer <- st_buffer(nz_height, dist = 1000000)
+
+
+# same as st_filter with st_is_within_distance
+c_height5 <- nz_height_buffer %>% 
+  st_filter(y = canterbury, .predicate = st_intersects)
+
+# check to see if results match previous approach
+if(nrow(c_height4) == nrow(c_height5)){
+  print("results from buffer approach match st_is_within_distance() approach")
+} else{
+  warning("approaches giving different results")
+}
+```
+
+
+## Clipping 
+
+Spatial clipping is a form of spatial subsetting that involves changes to the geometry columns of at least some of the affected features.
+
+Clipping can only apply to features more complex than points: lines, polygons and their ‘multi’ equivalents.
+
+```{r}
+x <- st_sfc(st_point(c(0,1))) %>% 
+  st_buffer(., dist = 1) %>% 
+  st_as_sf()
+
+y <- st_sfc(st_point(c(1,1))) %>% 
+  st_buffer(., dist = 1) %>% 
+  st_as_sf()
+
+bbox <- st_union(x, y)
+
+tm_shape(x, bbox = bbox) +
+  tm_borders(col = "red") +
+  tm_shape(y) +
+  tm_borders(col = "blue")
+```
+
+Now we want to create a geometry that is the intersection of the two circles 
+```{r}
+intersection <- st_intersection(x, y)
+
+tm_shape(x, bbox = bbox) +
+  tm_borders(col = "red") +
+  tm_shape(y) +
+  tm_borders(col = "blue") +
+  tm_shape(intersection) + 
+  tm_fill(col = "purple")
+```
+
+```{r}
+difference_x_y <- st_difference(x, y)
+difference_y_x <- st_difference(y, x)
+union <- st_union(x, y)
+sym_difference <- st_sym_difference(x, y)
+```
+
+```{r}
+bbox <- st_union(x, y)
+
+map1 <- tm_shape(x, bbox = bbox) +
+  tm_borders(col = "red") +
+  tm_shape(y) +
+  tm_borders(col = "blue")
+
+map2 <- map1 +
+  tm_shape(intersection, bbox = bbox) +
+  tm_fill(col = "purple") +
+  tm_layout(title = "st_intersection()")
+
+map3 <- map1 +
+  tm_shape(difference_x_y, bbox = bbox) +
+  tm_fill(col = "purple") +
+  tm_layout(title = "st_difference(x,y)")
+
+map4 <- map1 +
+  tm_shape(difference_y_x, bbox = bbox) +
+  tm_fill(col = "purple") +
+  tm_layout(title = "st_difference(y,x)")
+
+map5 <- map1 +
+  tm_shape(union, bbox = bbox) +
+  tm_fill(col = "purple") +
+  tm_layout(title = "st_union()")
+
+map6 <- map1 +
+  tm_shape(sym_difference, bbox = bbox) +
+  tm_fill(col = "purple") +
+  tm_layout(title = "st_sym_diffference()")
+
+tmap_arrange(map1, map2, map3, map4, map5, map6, nrow = 2)
+```
+
+
+```{r}
+bb <- bbox 
+box <- st_as_sf(bb)
+p <- st_sample(x = box, size = 100) %>% # create random points 
+  st_as_sf()
+
+
+tm_shape(x, bbox = bbox) +
+  tm_borders(col = "red") +
+  tm_shape(y) +
+  tm_borders(col = "blue") +
+  tm_shape(p) + 
+  tm_dots()
+```
+
+Find the points that intersect both x and y 
+
+```{r}
+x_and_y <- st_intersection(x, y)
+p_xy1 <- p[x_and_y, ]
+
+tm_shape(x, bbox = bbox) +
+  tm_borders(col = "red") +
+  tm_shape(y) +
+  tm_borders(col = "blue") +
+  tm_shape(p_xy1) + 
+  tm_dots()
+```
+
+
+## Centroids 
+
+There are many ways to that we might want to define the “center” of an object, but the most common is the geographic centroid which is the center of mass of a spatial object. The geographic centroid can be found using `st_centroid()`.
+
+Sometimes the geographic centroid may fall outside of the boundaries of the object (picture the centroid of a doughnut!). While correct, it might be confusing on a map, so we can use `st_point_on_surface()` to ensure that the centroid is placed onto the object.
+
+```{r}
+# geographic centroid 
+nz_centroid <- st_centroid(nz) 
+
+# centroid is placed onto the object 
+nz_pos <- st_point_on_surface(nz) 
+
+tm_shape(nz) +
+  tm_polygons() +
+  tm_shape(nz_centroid) +
+  tm_symbols(col = "red", alpha = 0.5) +
+  tm_shape(nz_pos) +
+  tm_symbols(col = "blue", alpha = 0.5)
+```
+
+
+## Simplification 
+
+```{r}
+# distance tolerance = 2000 meters 
+seine_simple <- st_simplify(seine, dTolerance = 2000)
+
+# orginial seine map 
+map1<- tm_shape(seine) +
+  tm_lines()
+
+# simplified map of seine
+map2<- tm_shape(seine_simple) +
+  tm_lines(col = "red")
+
+tmap_arrange(map1, map2, nrow = 1)
+```
+
