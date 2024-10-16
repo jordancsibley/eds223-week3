@@ -50,12 +50,129 @@ Now, to meet this week’s learning objectives, your task:
 -   Show the different outputs from a spatial subset and a spatial join
 -   Bonus Challenge: Try it out with a 5 km buffer around the protected areas too!
 
+```{r}
+# Check if they share a coordinate reference system 
+if (st_crs(aves) == st_crs(sb_protected_areas)) {
+  print("They have the same CRS")
+} else {
+  print("They don't have the same CRS")
+}
+```
+
+```{r}
+# spatial subset 
+aves_PA_subset <- sb_protected_areas[aves, ]
+
+nrow(aves_PA_subset)
+```
+
+```{r}
+tm_shape(sb_protected_areas) + 
+  tm_polygons() +
+  tm_shape(aves_PA_subset) +
+  tm_dots()
+```
+
+
+```{r}
+# spatial join 
+
+# joining birds and protected areas 
+aves_PA_join <- st_join(aves, sb_protected_areas)
+
+# order matters, joining birds to protected areas 
+```
+
+```{r}
+# includes more data out side of sb protected area 
+tm_shape(sb_protected_areas) + 
+  tm_polygons() +
+  tm_shape(aves_PA_join) +
+  tm_dots()
+```
+
+Creating a buffer around the protected areas 
+```{r}
+# Check the units of the crs
+st_crs(sb_protected_areas)$units
+
+```
+
+```{r}
+# 5000m is 5 km 
+PAs_5km <- st_buffer(sb_protected_areas, dist = 5000)
+```
+
+```{r}
+aves_PAs_5km <- PAs_5km[aves, ]
+# non sf library way of what intersects in it spatially 
+
+
+nrow(aves_PAs_5km)
+```
+
+
 2.  Find the protected areas within 15 km of a city in Santa Barbara County
 
 -   Hint: Use dplyr::filter() to select a city from sb_city_boundaries
 -   Explore the different outputs with st_intersects(), st_intersection(), and st_within()
+
+```{r}
+# subset goleta 
+goleta <- sb_city_boundaries %>% 
+  dplyr::filter(NAME == "Goleta")
+
+# intersection of PAs and the city of goleta (just to see)
+PAs_goleta <- sb_protected_areas[goleta, ]
+
+# creating buffer around goleta 
+goleta_buffer <- st_buffer(goleta, dist = 5000)
+
+# sb_protected areas and area of goleta buffer 
+PAs_goleta_buffer <- st_intersection(sb_protected_areas, goleta_buffer)
+
+# map 
+tm_shape(goleta_buffer) +
+  tm_polygons() +
+  tm_shape(goleta) +
+  tm_borders() +
+  tm_shape(PAs_goleta_buffer) +
+  tm_dots()
+```
+
+
 -   Practice a distance-based join with st_is_within_distance()
 
 3.  Find the distance between your city of choice and a protected area of your choice
 
 -   Note: st_distance() finds the distance between the geometries’ edges
+
+
+NOTES ON HW 
+HOLC grades can occur in multiple polygons 
+probably use st_intersects() 
+
+Getting intersects of census blocks and holc 
+many was to do it, all are write but slightly diffferent topological relationship. 
+- double counting 
+- know why you are doing it 
+
+#### maybe not helpful
+sel_cbgs2 <- st_intersects(ejscreen_LA, holc)
+logical = length(sel_cbgs2) > 0 
+relinging_cbgs2 <- ejscreen_LA[logical, ]
+
+redling_cbgs1 <- ejscreen_la[holc, ]
+
+
+readlinging_3 <- ejscreen %>% 
+st_filter(y = holc, .predicate  = st_intersects)
+
+only if census blocks fits within the holc, will not capture block that is within 2 holcs 
+readlinging_4 <- ejscreen %>% 
+st_within(y = holc, .predicate  = st_intersects)
+number of rows will be a lot smaller 
+
+readlinging_5 <- st_join(x = ejscreen_la, y = holc, join = st_intersects, left = FALSE) this is an interjoin 
+
+readlining_6 <- st_join(x = ejscreen, y = hold, join = st_intersects, left = TRUE ) this is a left join 
